@@ -1,12 +1,6 @@
 # Deploying The Backend
 
-This service is ready to deploy as a standalone Node.js app from the `server` folder.
-
-## Recommended platforms
-
-- Render
-- Railway
-- Any Docker host
+This backend is set up to deploy on Render as a standard Node.js web service from the `server` folder.
 
 ## Required environment variables
 
@@ -30,33 +24,15 @@ Set these only if you use the related features:
 
 ## Render
 
-If this folder is the repo root:
+This repository includes a root-level `render.yaml` for the simplest setup.
 
-1. Create a new Web Service.
-2. Point Render to this repository.
-3. Use `npm ci` as the build command.
-4. Use `npm start` as the start command.
-5. Set the health check path to `/api/health`.
-6. Add the environment variables from `.env.example`.
-
-You can also deploy with the included `render.yaml`.
-
-## Railway
-
-1. Create a new project from the repository.
-2. Set the root directory to `server` if your repo root is one level above this folder.
-3. Railway should detect Node automatically.
-4. Set the start command to `npm start` if it does not auto-detect it.
-5. Add the environment variables from `.env.example`.
-
-## Docker
-
-Build and run locally:
-
-```bash
-docker build -t golf-charity-backend .
-docker run --env-file .env -p 5000:5000 golf-charity-backend
-```
+1. Push this repo to GitHub.
+2. In Render, create a new Blueprint instance or new Web Service from the repository.
+3. If you create the service manually, set the root directory to `server`.
+4. Use `npm ci` as the build command.
+5. Use `npm start` as the start command.
+6. Set the health check path to `/api/health`.
+7. Add the environment variables listed above.
 
 ## Production notes
 
