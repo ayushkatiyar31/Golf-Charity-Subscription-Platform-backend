@@ -20,7 +20,8 @@ const uploadDirectory = path.resolve(__dirname, '..', env.uploadDir);
 fs.mkdirSync(uploadDirectory, { recursive: true });
 
 const app = express();
-const allowedOrigins = new Set([env.clientUrl]);
+const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/+$/, '');
+const allowedOrigins = new Set(env.allowedOrigins.map(normalizeOrigin));
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -29,7 +30,7 @@ app.use(
         return;
       }
 
-      if (allowedOrigins.has(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+      if (allowedOrigins.has(normalizeOrigin(origin)) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
         callback(null, true);
         return;
       }
