@@ -4,8 +4,11 @@ import { Draw } from '../models/Draw.js';
 import { Prize } from '../models/Prize.js';
 import { User } from '../models/User.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { buildDrawOutcome } from '../utils/drawEngine.js';
 import { createError } from '../utils/createError.js';
 import { sendPrizeReviewEmail } from '../utils/email.js';
+
+const getMonthKey = (rawMonth) => rawMonth || new Date().toISOString().slice(0, 7);
 
 export const getAdminAnalytics = asyncHandler(async (_req, res) => {
   const [totalUsers, totalPrizePool, charityContributions, totalDraws] = await Promise.all([
@@ -37,6 +40,87 @@ export const getAdminAnalytics = asyncHandler(async (_req, res) => {
 export const listUsers = asyncHandler(async (_req, res) => {
   const users = await User.find().populate('charity').sort({ createdAt: -1 });
   res.json(users);
+});
+
+export const listDrawHistory = asyncHandler(async (req, res) => {
+  const { status = '', limit = 24 } = req.query;
+  const query = status ? { status } : {};
+  const safeLimit = Math.min(Number(limit) || 24, 100);
+
+  const draws = await Draw.find(query)
+    .populate('entries.user', 'name email charity subscription scores')
+    .sort({ createdAt: -1 })
+    .limit(safeLimit);
+
+  res.json(draws);
+});
+
+export const listSimulations = asyncHandler(async (req, res) => {
+  const { limit = 24 } = req.query;
+  const safeLimit = Math.min(Number(limit) || 24, 100);
+  const simulations = await Draw.find({ status: 'simulated' })
+    .populate('entries.user', 'name email charity subscription scores')
+    .sort({ createdAt: -1 })
+    .limit(safeLimit);
+
+  res.json(simulations);
+});
+
+export const createSimulation = asyncHandler(async (req, res) => {
+  const monthKey = getMonthKey(req.body.monthKey);
+  const existing = await Draw.findOne({ monthKey });
+  if (existing?.status === 'published') {
+    throw createError(409, 'Draw already published for this month');
+  }
+
+  const users = await User.find().populate('charity');
+  const latestPublished = await Draw.findOne({ status: 'published' }).sort({ createdAt: -1 });
+  const result = buildDrawOutcome({
+    users,
+    logic: req.body.logic || 'random',
+    rollover: latestPublished?.rolloverToNext || 0
+  });
+
+  const simulation = existing || new Draw({ monthKey });
+  simulation.logic = req.body.logic || 'random';
+  simulation.status = 'simulated';
+  simulation.winningNumbers = result.winningNumbers;
+  simulation.basePool = result.basePool;
+  simulation.totalPool = result.totalPool;
+  simulation.rolloverFromPrevious = result.rollover;
+  simulation.rolloverToNext = result.rolloverToNext;
+  simulation.resultsPublishedAt = null;
+  simulation.entries = result.entries.map((entry) => ({
+    ...entry,
+    prizeAmount: result.prizeMap[entry.user.toString()]?.amount || 0
+  }));
+  await simulation.save();
+
+  res.status(201).json(simulation);
+});
+
+export const listWinners = asyncHandler(async (req, res) => {
+  const { matchCount = '', payoutStatus = '', verificationStatus = '', limit = 100 } = req.query;
+  const query = {};
+  const safeLimit = Math.min(Number(limit) || 100, 200);
+
+  if (matchCount) {
+    query.matchCount = Number(matchCount);
+  }
+  if (payoutStatus) {
+    query.payoutStatus = payoutStatus;
+  }
+  if (verificationStatus) {
+    query.verificationStatus = verificationStatus;
+  }
+
+  const winners = await Prize.find(query)
+    .populate('user', 'name email charity')
+    .populate('draw', 'monthKey winningNumbers totalPool status resultsPublishedAt')
+    .sort({ createdAt: -1 })
+    .limit(safeLimit);
+
+  res.json(winners);
 });
 
 export const updateUser = asyncHandler(async (req, res) => {

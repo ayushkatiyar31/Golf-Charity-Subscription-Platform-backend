@@ -23,6 +23,7 @@ export const env = {
   stripeMonthlyPriceId: process.env.STRIPE_MONTHLY_PRICE_ID || '',
   stripeYearlyPriceId: process.env.STRIPE_YEARLY_PRICE_ID || '',
   stripeWebhookPath: process.env.STRIPE_WEBHOOK_PATH || '/api/subscriptions/webhook',
+  allowMockCheckout: process.env.ALLOW_MOCK_CHECKOUT === 'true',
   emailFrom: process.env.EMAIL_FROM || 'no-reply@golfcharityplatform.local',
   smtpHost: process.env.SMTP_HOST || '',
   smtpPort: Number(process.env.SMTP_PORT || 587),

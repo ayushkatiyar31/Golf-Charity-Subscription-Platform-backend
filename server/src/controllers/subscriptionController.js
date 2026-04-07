@@ -29,6 +29,10 @@ const normalizeProviderStatus = (status) => {
   if (status === 'incomplete' || status === 'incomplete_expired') return 'incomplete';
   return 'expired';
 };
+
+const isProduction = () => process.env.NODE_ENV === 'production';
+const canUseManualCheckout = () => env.allowMockCheckout || !isProduction();
+
 const getStripeGatewayIssues = (plan = null) => {
   const issues = [];
 
@@ -44,11 +48,46 @@ const getStripeGatewayIssues = (plan = null) => {
   return [...new Set(issues)];
 };
 
-const assertStripeGatewayReady = (plan) => {
+const buildManualCheckoutResponse = (subscription) => ({
+  provider: 'mock',
+  mode: 'manual',
+  message: 'Subscription activated in development mode because Stripe is not configured',
+  subscription,
+  url: `${env.appUrl}/subscribe?checkout=success&provider=mock`
+});
+
+const createCheckoutResponse = async ({ req, plan, autoRenew }) => {
   const issues = getStripeGatewayIssues(plan);
+
   if (issues.length) {
-    throw createError(503, 'Stripe is not fully configured. Missing: ' + issues.join(', '));
+    if (!canUseManualCheckout()) {
+      throw createError(503, 'Stripe is not fully configured. Missing: ' + issues.join(', '));
+    }
+
+    const subscription = await createManualSubscription({ user: req.user, plan, autoRenew });
+    return buildManualCheckoutResponse(subscription);
   }
+
+  const session = await createStripeCheckoutSession({
+    user: req.user,
+    plan,
+    autoRenew,
+    charityId: req.user.charity?._id?.toString?.() || req.user.charity?.toString?.() || ''
+  });
+
+  await PaymentTransaction.create({
+    user: req.user._id,
+    plan: plan._id,
+    provider: 'stripe',
+    type: 'initial',
+    status: 'pending',
+    amount: plan.price,
+    currency: plan.currency,
+    providerCheckoutSessionId: session.id,
+    metadata: session.metadata || {}
+  });
+
+  return { provider: 'stripe', mode: 'redirect', url: session.url, sessionId: session.id };
 };
 
 const getPlanByInput = async ({ planId, interval }) => {
@@ -190,12 +229,14 @@ export const getSubscriptionStatus = asyncHandler(async (req, res) => {
   const currentSubscription = req.subscriptionRecord || null;
   const transactions = await PaymentTransaction.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(10);
   const paymentGatewayIssues = [...new Set(getStripeGatewayIssues().concat(plans.flatMap((plan) => getStripeGatewayIssues(plan))))];
+  const paymentGatewayReady = paymentGatewayIssues.length === 0 && isStripeEnabled();
   res.json({
     currentSubscription,
     plans,
     transactions,
     snapshot: req.user.subscription || {},
-    paymentGatewayReady: paymentGatewayIssues.length === 0 && isStripeEnabled(),
+    paymentGatewayReady: paymentGatewayReady || canUseManualCheckout(),
+    paymentGatewayMode: paymentGatewayReady ? 'stripe' : canUseManualCheckout() ? 'mock' : 'unavailable',
     paymentGatewayIssues
   });
 });
@@ -206,28 +247,7 @@ export const createSubscription = asyncHandler(async (req, res) => {
   if (!plan) throw createError(404, 'Plan not found');
   await ensureCharity(req, charityId);
 
-  assertStripeGatewayReady(plan);
-
-  const session = await createStripeCheckoutSession({
-    user: req.user,
-    plan,
-    autoRenew,
-    charityId: req.user.charity?._id?.toString?.() || req.user.charity?.toString?.() || ''
-  });
-
-  await PaymentTransaction.create({
-    user: req.user._id,
-    plan: plan._id,
-    provider: 'stripe',
-    type: 'initial',
-    status: 'pending',
-    amount: plan.price,
-    currency: plan.currency,
-    providerCheckoutSessionId: session.id,
-    metadata: session.metadata || {}
-  });
-
-  res.json({ provider: 'stripe', mode: 'redirect', url: session.url, sessionId: session.id });
+  res.json(await createCheckoutResponse({ req, plan, autoRenew }));
 });
 
 export const createCheckoutSession = asyncHandler(async (req, res) => {
@@ -236,28 +256,7 @@ export const createCheckoutSession = asyncHandler(async (req, res) => {
   if (!plan) throw createError(404, 'Plan not found');
   await ensureCharity(req, charityId);
 
-  assertStripeGatewayReady(plan);
-
-  const session = await createStripeCheckoutSession({
-    user: req.user,
-    plan,
-    autoRenew,
-    charityId: req.user.charity?._id?.toString?.() || req.user.charity?.toString?.() || ''
-  });
-
-  await PaymentTransaction.create({
-    user: req.user._id,
-    plan: plan._id,
-    provider: 'stripe',
-    type: 'initial',
-    status: 'pending',
-    amount: plan.price,
-    currency: plan.currency,
-    providerCheckoutSessionId: session.id,
-    metadata: session.metadata || {}
-  });
-
-  res.json({ provider: 'stripe', mode: 'redirect', url: session.url, sessionId: session.id });
+  res.json(await createCheckoutResponse({ req, plan, autoRenew }));
 });
 
 export const confirmCheckoutSession = asyncHandler(async (req, res) => {
